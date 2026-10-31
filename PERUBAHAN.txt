@@ -1,0 +1,1 @@
+Frontend patch: health check dan POST /api/feedback kini menggunakan SIMJIWA_API_BASE (URL Render). Semua materi, simulasi, Ruang 3D/WebXR, dan Refleksi dari index.html asli dipertahankan. Backend belum dipublikasikan dan API key belum diatur; lakukan langkah README untuk mengaktifkan GenAI.
