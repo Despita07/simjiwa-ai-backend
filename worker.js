@@ -1,242 +1,230 @@
+
 const DEFAULT_MODEL = "gemini-2.5-flash";
-const DEFAULT_ORIGIN = "https://despita07.github.io";
+const MAX_RESPONSE_LENGTH = 4000;
+const MAX_SCENARIO_LENGTH = 1500;
 
-function makeCorsHeaders(request, env) {
-  const origin = request.headers.get("Origin") || "";
-  const allowed = (env.ALLOWED_ORIGIN || DEFAULT_ORIGIN)
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean);
-
-  const permitted = allowed.includes("*") || allowed.includes(origin);
-
+function corsHeaders() {
   return {
-    "Access-Control-Allow-Origin": allowed.includes("*")
-      ? "*"
-      : (permitted ? origin : "null"),
+    "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
-    "Access-Control-Max-Age": "86400",
-    "Vary": "Origin"
+    "Content-Type": "application/json; charset=utf-8"
   };
 }
 
-function sendJson(data, status, corsHeaders) {
+function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
-    status: status,
-    headers: {
-      "Content-Type": "application/json; charset=utf-8",
-      ...corsHeaders
-    }
+    status,
+    headers: corsHeaders()
   });
-}
-
-function getGeminiText(data) {
-  const candidates = data && data.candidates ? data.candidates : [];
-  const content = candidates[0] && candidates[0].content
-    ? candidates[0].content
-    : {};
-  const parts = content.parts || [];
-
-  return parts
-    .map((part) => part.text || "")
-    .filter(Boolean)
-    .join("\n")
-    .trim();
 }
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    const corsHeaders = makeCorsHeaders(request, env);
 
     if (request.method === "OPTIONS") {
       return new Response(null, {
         status: 204,
-        headers: corsHeaders
+        headers: corsHeaders()
       });
     }
 
     if (request.method === "GET" && url.pathname === "/") {
-      return sendJson({
+      return json({
         ok: true,
         service: "SIMJIWA Gemini Worker",
         status: "running",
-        endpoints: ["/api/health", "/api/jiwa-ai", "/api/feedback"]
-      }, 200, corsHeaders);
+        health: "/api/health",
+        endpoint: "/api/feedback"
+      });
     }
 
-    if (request.method === "GET" && url.pathname === "/api/health") {
-      return sendJson({
+    if (
+      request.method === "GET" &&
+      url.pathname === "/api/health"
+    ) {
+      return json({
         ok: true,
         service: "SIMJIWA Gemini Worker",
         aiEnabled: Boolean(env.GEMINI_API_KEY),
         provider: "google-gemini",
         model: env.GEMINI_MODEL || DEFAULT_MODEL
-      }, 200, corsHeaders);
+      });
     }
 
-    const isAiEndpoint =
-      url.pathname === "/api/jiwa-ai" ||
-      url.pathname === "/api/feedback";
+    const isFeedbackRoute =
+      url.pathname === "/api/feedback" ||
+      url.pathname === "/api/jiwa-ai";
 
-    if (!isAiEndpoint) {
-      return sendJson({
-        ok: false,
-        error: "Endpoint tidak ditemukan."
-      }, 404, corsHeaders);
-    }
+    if (request.method === "POST" && isFeedbackRoute) {
 
-    if (request.method !== "POST") {
-      return sendJson({
-        ok: false,
-        error: "Gunakan metode POST untuk endpoint AI."
-      }, 405, corsHeaders);
-    }
+      if (!env.GEMINI_API_KEY) {
+        return json({
+          ok: false,
+          error: "Secret GEMINI_API_KEY belum dipasang."
+        }, 503);
+      }
 
-    if (!env.GEMINI_API_KEY) {
-      return sendJson({
-        ok: false,
-        error: "Secret GEMINI_API_KEY belum dipasang pada Cloudflare Worker."
-      }, 503, corsHeaders);
-    }
+      let body;
 
-    let body;
-    try {
-      body = await request.json();
-    } catch (error) {
-      return sendJson({
-        ok: false,
-        error: "Isi permintaan harus berupa JSON yang valid."
-      }, 400, corsHeaders);
-    }
+      try {
+        body = await request.json();
+      } catch {
+        return json({
+          ok: false,
+          error: "Body permintaan harus berupa JSON yang valid."
+        }, 400);
+      }
 
-    const studentResponse =
-      body.studentResponse ||
-      body.response ||
-      body.answer ||
-      body.message ||
-      body.text;
+      const studentResponse =
+        body.studentResponse ??
+        body.response ??
+        body.answer ??
+        body.message ??
+        body.text;
 
-    const scenario =
-      body.scenario ||
-      body.case ||
-      "Klien fiktif merasa takut karena mendengar suara.";
+      const scenario =
+        body.scenario ??
+        body.case ??
+        "Klien fiktif merasa takut karena mendengar suara.";
 
-    if (
-      typeof studentResponse !== "string" ||
-      studentResponse.trim().length === 0 ||
-      studentResponse.length > 4000
-    ) {
-      return sendJson({
-        ok: false,
-        error: "Respons mahasiswa wajib berupa teks dengan panjang 1 sampai 4000 karakter."
-      }, 400, corsHeaders);
-    }
+      if (
+        typeof studentResponse !== "string" ||
+        !studentResponse.trim()
+      ) {
+        return json({
+          ok: false,
+          error: "Respons mahasiswa wajib diisi."
+        }, 400);
+      }
 
-    if (typeof scenario !== "string" || scenario.length > 1500) {
-      return sendJson({
-        ok: false,
-        error: "Skenario harus berupa teks maksimal 1500 karakter."
-      }, 400, corsHeaders);
-    }
+      if (studentResponse.length > MAX_RESPONSE_LENGTH) {
+        return json({
+          ok: false,
+          error: "Respons mahasiswa maksimal 4000 karakter."
+        }, 400);
+      }
 
-    const prompt = [
-      "Anda adalah SIMJIWA AI, pendamping latihan komunikasi terapeutik untuk mahasiswa keperawatan jiwa.",
-      "Berikan umpan balik pendidikan berdasarkan skenario dan respons mahasiswa.",
-      "Jangan mendiagnosis, meresepkan obat, atau menggantikan dosen maupun perawat klinis.",
-      "Jangan membenarkan halusinasi atau waham sebagai fakta.",
-      "Gunakan empati, validasi emosi, komunikasi netral, eksplorasi pengalaman, dan pengkajian keselamatan.",
-      "Jika terdapat risiko bahaya segera, sarankan mahasiswa melibatkan dosen/pembimbing dan tim klinis sesuai SOP.",
-      "Jangan meminta atau memproses identitas pasien nyata. Gunakan bahasa Indonesia.",
-      "Susun jawaban dalam bagian: (1) Hal yang sudah baik, (2) Hal yang perlu diperbaiki, (3) Contoh kalimat alternatif, (4) Pertanyaan latihan berikutnya, (5) Catatan keselamatan bila relevan.",
-      "Tegaskan bahwa umpan balik bersifat edukatif dan perlu ditelaah bersama dosen.",
-      "",
-      "SKENARIO FIKTIF:",
-      scenario,
-      "",
-      "RESPONS MAHASISWA:",
-      studentResponse.trim()
-    ].join("\n");
+      const prompt = `
+Anda adalah pendamping latihan komunikasi terapeutik
+untuk mahasiswa keperawatan jiwa.
 
-    const model = env.GEMINI_MODEL || DEFAULT_MODEL;
-    const endpoint =
-      "https://generativelanguage.googleapis.com/v1beta/models/" +
-      encodeURIComponent(model) +
-      ":generateContent";
+Berikan umpan balik pendidikan terhadap respons mahasiswa
+pada skenario fiktif berikut.
 
-    let geminiResponse;
-    try {
-      geminiResponse = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-goog-api-key": env.GEMINI_API_KEY
-        },
-        body: JSON.stringify({
-          contents: [
-            {
+Jangan mendiagnosis, meresepkan obat, atau menggantikan
+dosen maupun perawat klinis.
+
+Jangan membenarkan halusinasi sebagai fakta.
+Jangan meremehkan pengalaman klien.
+
+Nilai:
+1. Empati dan validasi emosi.
+2. Komunikasi terapeutik yang netral.
+3. Eksplorasi pengalaman.
+4. Pengkajian keselamatan.
+5. Privasi dan martabat klien.
+
+Jika ada indikasi bahaya segera, sarankan mahasiswa
+melibatkan dosen/pembimbing dan tim klinis sesuai SOP.
+
+Jangan meminta identitas pasien nyata.
+Gunakan bahasa Indonesia.
+
+Susun jawaban menjadi:
+1. Hal yang sudah baik.
+2. Hal yang perlu diperbaiki.
+3. Contoh kalimat alternatif.
+4. Pertanyaan latihan berikutnya.
+
+Tegaskan bahwa umpan balik bersifat edukatif
+dan perlu ditelaah bersama dosen.
+
+SKENARIO:
+${String(scenario).slice(0, MAX_SCENARIO_LENGTH)}
+
+RESPONS MAHASISWA:
+${studentResponse.trim()}
+`;
+
+      const model = env.GEMINI_MODEL || DEFAULT_MODEL;
+
+      const endpoint =
+        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+
+      let aiResponse;
+
+      try {
+        aiResponse = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-goog-api-key": env.GEMINI_API_KEY
+          },
+          body: JSON.stringify({
+            contents: [{
               role: "user",
               parts: [{ text: prompt }]
+            }],
+            generationConfig: {
+              temperature: 0.3,
+              maxOutputTokens: 900
             }
-          ],
-          generationConfig: {
-            temperature: 0.3,
-            maxOutputTokens: 900
-          }
-        })
+          })
+        });
+      } catch {
+        return json({
+          ok: false,
+          error: "Tidak dapat terhubung ke layanan Gemini."
+        }, 502);
+      }
+
+      let result;
+
+      try {
+        result = await aiResponse.json();
+      } catch {
+        return json({
+          ok: false,
+          error: "Respons Gemini tidak dapat dibaca."
+        }, 502);
+      }
+
+      if (!aiResponse.ok) {
+        return json({
+          ok: false,
+          error: aiResponse.status === 429
+            ? "Kuota Gemini tercapai. Coba lagi nanti."
+            : (result?.error?.message || "Permintaan Gemini gagal."),
+          providerStatus: aiResponse.status
+        }, aiResponse.status === 429 ? 429 : 502);
+      }
+
+      const feedback = (
+        result?.candidates?.[0]?.content?.parts || []
+      )
+        .map(part => part.text || "")
+        .join("\n")
+        .trim();
+
+      if (!feedback) {
+        return json({
+          ok: false,
+          error: "Gemini tidak menghasilkan umpan balik."
+        }, 502);
+      }
+
+      return json({
+        ok: true,
+        feedback: feedback,
+        model: model
       });
-    } catch (error) {
-      return sendJson({
-        ok: false,
-        error: "Worker tidak dapat terhubung ke layanan Google Gemini."
-      }, 502, corsHeaders);
     }
 
-    let geminiData;
-    try {
-      geminiData = await geminiResponse.json();
-    } catch (error) {
-      return sendJson({
-        ok: false,
-        error: "Respons dari Google Gemini bukan JSON yang dapat dibaca."
-      }, 502, corsHeaders);
-    }
-
-    if (!geminiResponse.ok) {
-      const detail =
-        geminiData &&
-        geminiData.error &&
-        geminiData.error.message
-          ? geminiData.error.message
-          : "Google Gemini menolak permintaan.";
-
-      return sendJson({
-        ok: false,
-        error: geminiResponse.status === 429
-          ? "Batas penggunaan atau kuota Gemini tercapai. Silakan coba lagi nanti."
-          : "Gemini gagal memproses permintaan: " + detail,
-        providerStatus: geminiResponse.status
-      }, geminiResponse.status === 429 ? 429 : 502, corsHeaders);
-    }
-
-    const feedback = getGeminiText(geminiData);
-
-    if (!feedback) {
-      return sendJson({
-        ok: false,
-        error: "Gemini tidak menghasilkan teks. Silakan coba kembali."
-      }, 502, corsHeaders);
-    }
-
-    return sendJson({
-      ok: true,
-      provider: "google-gemini",
-      model: model,
-      feedback: feedback,
-      result: feedback,
-      reply: feedback,
-      text: feedback
-    }, 200, corsHeaders);
+    return json({
+      ok: false,
+      error: "Endpoint tidak ditemukan."
+    }, 404);
   }
 };
