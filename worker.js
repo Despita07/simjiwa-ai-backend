@@ -24,20 +24,20 @@ function json(data, status, cors) {
 }
 
 
-function json(data, status, cors) {
-  return new Response(JSON.stringify(data), {
-    status: status,
-    headers: {
-      "Content-Type": "application/json",
-      ...cors
-    }
-  });
-}
 
-export default {
-  async fetch(request, env) {
-    const url = new URL(request.url);
-    const origin = request.headers.get("Origin") || "";
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
