@@ -1,4 +1,3 @@
-
 const DEFAULT_MODEL = "gemini-2.5-flash";
 const MAX_RESPONSE_LENGTH = 4000;
 const MAX_SCENARIO_LENGTH = 1500;
@@ -14,7 +13,7 @@ function corsHeaders() {
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
-    status,
+    status: status,
     headers: corsHeaders()
   });
 }
@@ -23,6 +22,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
+    // CORS
     if (request.method === "OPTIONS") {
       return new Response(null, {
         status: 204,
@@ -30,6 +30,7 @@ export default {
       });
     }
 
+    // HOME
     if (request.method === "GET" && url.pathname === "/") {
       return json({
         ok: true,
@@ -40,6 +41,7 @@ export default {
       });
     }
 
+    // HEALTH CHECK
     if (
       request.method === "GET" &&
       url.pathname === "/api/health"
@@ -53,11 +55,12 @@ export default {
       });
     }
 
-    const isFeedbackRoute =
+    // AI ROUTES
+    const isAiRoute =
       url.pathname === "/api/feedback" ||
       url.pathname === "/api/jiwa-ai";
 
-    if (request.method === "POST" && isFeedbackRoute) {
+    if (request.method === "POST" && isAiRoute) {
 
       if (!env.GEMINI_API_KEY) {
         return json({
@@ -66,17 +69,19 @@ export default {
         }, 503);
       }
 
+      // READ REQUEST
       let body;
 
       try {
         body = await request.json();
-      } catch {
+      } catch (error) {
         return json({
           ok: false,
-          error: "Body permintaan harus berupa JSON yang valid."
+          error: "Format permintaan harus JSON."
         }, 400);
       }
 
+      // STUDENT RESPONSE
       const studentResponse =
         body.studentResponse ??
         body.response ??
@@ -102,10 +107,11 @@ export default {
       if (studentResponse.length > MAX_RESPONSE_LENGTH) {
         return json({
           ok: false,
-          error: "Respons mahasiswa maksimal 4000 karakter."
+          error: "Respons maksimal 4000 karakter."
         }, 400);
       }
 
+      // PROMPT
       const prompt = `
 Anda adalah pendamping latihan komunikasi terapeutik
 untuk mahasiswa keperawatan jiwa.
@@ -119,7 +125,7 @@ dosen maupun perawat klinis.
 Jangan membenarkan halusinasi sebagai fakta.
 Jangan meremehkan pengalaman klien.
 
-Nilai:
+Nilai aspek:
 1. Empati dan validasi emosi.
 2. Komunikasi terapeutik yang netral.
 3. Eksplorasi pengalaman.
@@ -148,11 +154,15 @@ RESPONS MAHASISWA:
 ${studentResponse.trim()}
 `;
 
+      // GEMINI CONFIGURATION
       const model = env.GEMINI_MODEL || DEFAULT_MODEL;
 
       const endpoint =
-        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+        "https://generativelanguage.googleapis.com/v1beta/models/" +
+        encodeURIComponent(model) +
+        ":generateContent";
 
+      // SEND REQUEST
       let aiResponse;
 
       try {
@@ -163,48 +173,59 @@ ${studentResponse.trim()}
             "x-goog-api-key": env.GEMINI_API_KEY
           },
           body: JSON.stringify({
-            contents: [{
-              role: "user",
-              parts: [{ text: prompt }]
-            }],
+            contents: [
+              {
+                role: "user",
+                parts: [
+                  { text: prompt }
+                ]
+              }
+            ],
             generationConfig: {
               temperature: 0.3,
               maxOutputTokens: 900
             }
           })
         });
-      } catch {
+
+      } catch (error) {
         return json({
           ok: false,
           error: "Tidak dapat terhubung ke layanan Gemini."
         }, 502);
       }
 
+      // READ GEMINI RESPONSE
       let result;
 
       try {
         result = await aiResponse.json();
-      } catch {
+      } catch (error) {
         return json({
           ok: false,
           error: "Respons Gemini tidak dapat dibaca."
         }, 502);
       }
 
+      // HANDLE API ERROR
       if (!aiResponse.ok) {
         return json({
           ok: false,
           error: aiResponse.status === 429
             ? "Kuota Gemini tercapai. Coba lagi nanti."
-            : (result?.error?.message || "Permintaan Gemini gagal."),
+            : (
+                result?.error?.message ||
+                "Permintaan Gemini gagal."
+              ),
           providerStatus: aiResponse.status
         }, aiResponse.status === 429 ? 429 : 502);
       }
 
+      // EXTRACT FEEDBACK
       const feedback = (
         result?.candidates?.[0]?.content?.parts || []
       )
-        .map(part => part.text || "")
+        .map((part) => part.text || "")
         .join("\n")
         .trim();
 
@@ -215,6 +236,7 @@ ${studentResponse.trim()}
         }, 502);
       }
 
+      // SUCCESS
       return json({
         ok: true,
         feedback: feedback,
@@ -222,6 +244,7 @@ ${studentResponse.trim()}
       });
     }
 
+    // UNKNOWN ENDPOINT
     return json({
       ok: false,
       error: "Endpoint tidak ditemukan."
