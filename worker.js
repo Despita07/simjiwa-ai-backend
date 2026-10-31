@@ -15,9 +15,10 @@ function corsHeaders(origin, allowedOrigin) {
 function json(data, status, cors) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { "Content-Type": "application/json; charset=utf-8", ...cors }
-  });
-}
+    headers: {
+  "Content-Type": "application/json",
+  "x-goog-api-key": env.GEMINI_API_KEY
+},
 
 export default {
   async fetch(request, env) {
@@ -79,8 +80,7 @@ Respons mahasiswa:
 ${studentResponse.trim()}`;
 
       const model = env.GEMINI_MODEL || DEFAULT_MODEL;
-      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(env.GEMINI_API_KEY)}`;
-
+     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
       try {
         const aiResponse = await fetch(endpoint, {
           method: "POST",
