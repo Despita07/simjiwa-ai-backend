@@ -15,13 +15,15 @@ function corsHeaders(origin, allowedOrigin) {
 
 function json(data, status, cors) {
   return new Response(JSON.stringify(data), {
-    status,
+    status: status,
     headers: {
       "Content-Type": "application/json",
       ...cors
     }
   });
 }
+
+export default {
 
 export default {
 
