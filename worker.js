@@ -12,13 +12,19 @@ function corsHeaders(origin, allowedOrigin) {
   };
 }
 
+
 function json(data, status, cors) {
   return new Response(JSON.stringify(data), {
     status,
     headers: {
-  "Content-Type": "application/json",
-  "x-goog-api-key": env.GEMINI_API_KEY
-},
+      "Content-Type": "application/json",
+      ...cors
+    }
+  });
+}
+
+export default {
+
 
 export default {
   async fetch(request, env) {
@@ -82,14 +88,22 @@ ${studentResponse.trim()}`;
       const model = env.GEMINI_MODEL || DEFAULT_MODEL;
      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
       try {
-        const aiResponse = await fetch(endpoint, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{ role: "user", parts: [{ text: instructions }] }],
-            generationConfig: { temperature: 0.3, maxOutputTokens: 700 }
-          })
-        });
+      
+const aiResponse = await fetch(endpoint, {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "x-goog-api-key": env.GEMINI_API_KEY
+  },
+  body: JSON.stringify({
+    contents: [{ role: "user", parts: [{ text: instructions }] }],
+    generationConfig: {
+      temperature: 0.3,
+      maxOutputTokens: 700
+    }
+  })
+});
+
 
         const result = await aiResponse.json();
         if (!aiResponse.ok) {
